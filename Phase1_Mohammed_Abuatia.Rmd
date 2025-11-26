@@ -1,0 +1,151 @@
+
+```{r}
+
+library(tidycensus)
+library(tidyverse)
+library(dplyr)
+
+
+census_api_key("db7c5219cbb7eb25653b03718b0cc4cacedb5069", install = TRUE)
+
+# -------------------------------------------------------------
+# VARIABLE LISTS
+# -------------------------------------------------------------
+
+# ===============================
+# AGE (B01001) — 18+
+# ===============================
+age_vars <- c(
+  "B01001_007",  # Male 18–19
+  "B01001_008",  # Male 20–24
+  "B01001_009",  # Male 25–29
+  "B01001_010",  # Male 30–34
+  "B01001_011",  # Male 35–44
+  "B01001_012",  # Male 45–54
+  "B01001_013",  # Male 55–64
+  "B01001_014",  # Male 65–74
+  "B01001_015",  # Male 75–84
+  "B01001_016",  # Male 85+
+  "B01001_031",  # Female 18–19
+  "B01001_032",  # Female 20–24
+  "B01001_033",  # Female 25–29
+  "B01001_034",  # Female 30–34
+  "B01001_035",  # Female 35–44
+  "B01001_036",  # Female 45–54
+  "B01001_037",  # Female 55–64
+  "B01001_038",  # Female 65–74
+  "B01001_039",  # Female 75–84
+  "B01001_040"   # Female 85+
+)
+
+# ===============================
+# RACE (B02001)
+# ===============================
+race_vars <- c(
+  "B02001_002",  # White
+  "B02001_003",  # Black or African American
+  "B02001_004",  # Native American
+  "B02001_005",  # Asian
+  "B02001_006",  # Pacific Islander
+  "B02001_007",  # Other race
+  "B02001_008"   # Two+ races
+)
+
+# ===============================
+# ETHNICITY (B03003)
+# ===============================
+ethnicity_vars <- c(
+  "B03003_003"  # Hispanic or Latino
+)
+
+# ===============================
+# DISABILITY (B18101)
+# ===============================
+disability_vars <- c(
+  "B18101_004",  # Hearing
+  "B18101_006",  # Vision
+  "B18101_008",  # Cognitive
+  "B18101_010",  # Ambulatory
+  "B18101_012",  # Self-care
+  "B18101_014"   # Independent living
+)
+
+# ===============================
+# LANGUAGE (B16004)
+# ===============================
+language_groups <- list(
+  English  = c("B16004_002"),
+  Spanish  = c("B16004_003", "B16004_004", "B16004_005", "B16004_006"),
+  IndoEuro = c("B16004_007", "B16004_008", "B16004_009", "B16004_010"),
+  Asian    = c("B16004_011", "B16004_012", "B16004_013", "B16004_014"),
+  Other    = c("B16004_015", "B16004_016", "B16004_017", "B16004_018")
+)
+
+# ============================================
+# MASTER FUNCTION 
+# ============================================
+
+pull_percent_total <- function(vars, label) {
+  
+  df <- get_acs(
+    geography = "county",
+    variables = vars,
+    year = 2022,
+    survey = "acs5"
+  )
+
+  wide <- df %>%
+    select(GEOID, variable, estimate) %>%  
+    pivot_wider(names_from = variable, values_from = estimate)
+
+  wide %>% mutate(
+    total = rowSums(across(all_of(vars)), na.rm = TRUE)
+  ) %>% select(GEOID, !!label := total)
+}
+
+# ============================================
+# PULL TOTALS
+# ============================================
+
+age_totals        <- pull_percent_total(age_vars, "age_18plus")
+race_totals       <- pull_percent_total(race_vars, "race_total")
+ethnicity_totals  <- pull_percent_total(ethnicity_vars, "hispanic_total")
+disability_totals <- pull_percent_total(disability_vars, "disability_total")
+
+language_totals <- map2_df(language_groups, names(language_groups), pull_percent_total)
+
+# ============================================
+# COUNTY POPULATION TOTAL
+# ============================================
+
+county_total <- get_acs(
+  geography = "county",
+  variables = "B01001_001", # Total population
+  year = 2022,
+  survey = "acs5"
+) %>% select(GEOID, county_pop = estimate)
+
+# ============================================
+# MERGE & COMPUTE PERCENTAGES
+# ============================================
+
+final_demographics <- county_total %>%
+  left_join(age_totals, by = "GEOID") %>%
+  left_join(race_totals, by = "GEOID") %>%
+  left_join(ethnicity_totals, by = "GEOID") %>%
+  left_join(disability_totals, by = "GEOID") %>%
+  left_join(language_totals, by = "GEOID") %>%
+  mutate(
+    pct_age_18plus = age_18plus / county_pop * 100,
+    pct_hispanic   = hispanic_total / county_pop * 100,
+    pct_disability   = disability_total / county_pop * 100
+  )
+
+# ============================================
+# SAVE OUTPUT (OPTIONAL)
+# ============================================
+
+# write.csv(final_demographics, "county_demographics_percentages.csv", row.names = FALSE)
+
+
+```
