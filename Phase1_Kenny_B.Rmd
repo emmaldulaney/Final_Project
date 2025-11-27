@@ -1,0 +1,119 @@
+---
+title: "NRI_Merging"
+output: html_document
+date: "2025-11-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(tidycensus)
+```
+
+```{r Load dat data}
+census_data<-read.csv("census_data.csv") #STCOFIPS
+county_trimmed<-read.csv("nri_county_trimmed.csv") #STCOFIPS
+demographics<-read.csv("county_demographics_percentages.csv") #GEOID
+employment<-read.csv("EMPLOYMENT_features.csv") #GEOID
+ACS_FEATURES<-read.csv("ACS_FEATURES.csv") #GEOID
+
+ACS_FEATURES$X<-NULL
+```
+
+```{r}
+names(census_data)
+names(county_trimmed)
+names(demographics)
+names(employment)
+names(ACS_FEATURES)
+```
+
+```{r extra counties}
+setdiff(county_trimmed$STCOFIPS, census_data$STCOFIPS)
+anti_join(county_trimmed, census_data, by = "STCOFIPS")
+
+census_data[census_data$STCOFIPS==9110,]
+county_trimmed[county_trimmed$STCOFIPS==9110,]
+```
+
+
+```{r Check out dat data}
+nrow(census_data)==length(unique(census_data$STCOFIPS))
+nrow(county_trimmed)==length(unique(county_trimmed$STCOFIPS))
+nrow(demographics)==length(unique(demographics$GEOID)) #FALSE
+nrow(employment)==length(unique(employment$GEOID))
+nrow(ACS_FEATURES)==length(unique(ACS_FEATURES$GEOID))
+```
+
+```{r demographics fixing}
+demographics<-demographics %>%
+  group_by(GEOID) %>%
+  summarise(across(everything(), ~ first(na.omit(.))), .groups = "drop")
+
+nrow(demographics)==length(unique(demographics$GEOID)) #fixed
+```
+
+```{r}
+demographics <- demographics %>% rename(STCOFIPS = GEOID)
+employment<-employment%>%rename(STCOFIPS=GEOID)
+ACS_FEATURES<-ACS_FEATURES%>%rename(STCOFIPS=GEOID)
+```
+
+```{r standardizing fips codes}
+census_data<-census_data %>%
+  mutate(STCOFIPS = as.character(STCOFIPS) %>% 
+           str_trim() %>% 
+           str_pad(5, pad = "0"))
+stopifnot(all(nchar(census_data$STCOFIPS) == 5))
+stopifnot(!any(is.na(census_data$STCOFIPS)))
+
+demographics<-demographics %>%
+  mutate(STCOFIPS = as.character(STCOFIPS) %>% 
+           str_trim() %>% 
+           str_pad(5, pad = "0"))
+stopifnot(all(nchar(demographics$STCOFIPS) == 5))
+stopifnot(!any(is.na(demographics$STCOFIPS)))
+
+employment<-employment %>%
+  mutate(STCOFIPS = as.character(STCOFIPS) %>% 
+           str_trim() %>% 
+           str_pad(5, pad = "0"))
+stopifnot(all(nchar(employment$STCOFIPS) == 5))
+stopifnot(!any(is.na(employment$STCOFIPS)))
+
+ACS_FEATURES<-ACS_FEATURES %>%
+  mutate(STCOFIPS = as.character(STCOFIPS) %>% 
+           str_trim() %>% 
+           str_pad(5, pad = "0"))
+stopifnot(all(nchar(ACS_FEATURES$STCOFIPS) == 5))
+stopifnot(!any(is.na(ACS_FEATURES$STCOFIPS)))
+
+county_trimmed<-county_trimmed %>%
+  mutate(STCOFIPS = as.character(STCOFIPS) %>% 
+           str_trim() %>% 
+           str_pad(5, pad = "0"))
+stopifnot(all(nchar(county_trimmed$STCOFIPS) == 5))
+stopifnot(!any(is.na(county_trimmed$STCOFIPS)))
+
+
+length(intersect(census_data$STCOFIPS, county_trimmed$STCOFIPS))
+```
+
+
+```{r merge}
+merged_data<-census_data%>%
+  full_join(county_trimmed,by="STCOFIPS")%>%
+  full_join(demographics,by="STCOFIPS")%>%
+  full_join(employment,by="STCOFIPS")%>%
+  full_join(ACS_FEATURES,by="STCOFIPS")
+
+length(unique(merged_data$STCOFIPS))
+```
+
+```{r}
+write.csv(merged_data,"merged_data.csv")
+```
+
