@@ -87,10 +87,10 @@ EDUCATION <- education_raw %>%
   mutate(
     total_25plus = B15003_001E,
     
-    # Sum of ACS columns 17 through 24 (HS graduate → doctorate)
+    # Sum of ACS columns 17 through 24 (HS graduate b doctorate)
     hs_or_higher = rowSums(across(B15003_017E:B15003_024E)),
     
-    # Sum of ACS columns 21 through 24 (BA → doctorate)
+    # Sum of ACS columns 21 through 24 (BA b doctorate)
     ba_or_higher = rowSums(across(B15003_021E:B15003_024E)),
     
     pct_hs_or_higher = (hs_or_higher / total_25plus) * 100,
@@ -116,7 +116,7 @@ INCOME_POVERTY <- income_raw %>%
     by = "GEOID"
   )
 
-ACS_FEATURES <- HOUSING %>%
+ACS_FEATURES_1 <- HOUSING %>%
   select(
     GEOID,
     NAME,
@@ -125,3 +125,5 @@ ACS_FEATURES <- HOUSING %>%
   ) %>%
   left_join(EDUCATION, by = "GEOID") %>%
   left_join(INCOME_POVERTY, by = "GEOID")
+
+write.csv(ACS_FEATURES,"ACS_FEATURES.csv",row.names = FALSE)
