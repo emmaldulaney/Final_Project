@@ -49,3 +49,5 @@ EMPLOYMENT <- employment_clean %>%
 head(EMPLOYMENT)
 summary(EMPLOYMENT)
 
+write.csv(EMPLOYMENT, "EMPLOYMENT_features.csv", row.names = FALSE)
+
