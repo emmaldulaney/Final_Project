@@ -113,6 +113,13 @@ merged_data<-census_data%>%
 length(unique(merged_data$STCOFIPS))
 ```
 
+```{r remove counties not tracked by NRI}
+
+merged_data<-merged_data[which(!is.na(merged_data$EAL_VALT)),]
+
+```
+
+
 ```{r}
 write.csv(merged_data,"merged_data.csv")
 ```
