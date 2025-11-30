@@ -1,0 +1,52 @@
+---
+title: "MSBA Capstone"
+output: html_document
+date: "2025-11-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+
+#Load NRI
+nri <- read.csv("nri_county_trimmed.csv",
+  colClasses = c("STCOFIPS" = "character"), #guarantee is a character
+  stringsAsFactors = FALSE,
+  na.strings = c("", " ", "NA")
+)
+
+head(nri, 5)
+
+
+glimpse(nri)
+unique(nchar(nri$STCOFIPS))
+
+#
+table(nchar(nri$STCOFIPS))
+
+# fix if needed
+nri <- nri %>%
+  mutate(STCOFIPS = str_pad(STCOFIPS, width = 5, side = "left", pad = "0"))
+
+# cleaning
+nri <- nri %>%
+  mutate(
+    across(starts_with("EAL_"), as.numeric),
+    across(
+      ends_with("EALB") | ends_with("EALP") |
+        ends_with("EALPE") | ends_with("EALT"),
+      as.numeric
+    ),
+    SOVI_SCORE = as.numeric(SOVI_SCORE),
+    SOVI_RATNG = as.factor(SOVI_RATNG)
+  )
+
+summary(nri)
+head(nri, 10)
+
+```
