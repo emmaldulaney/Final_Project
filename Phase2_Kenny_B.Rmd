@@ -1,0 +1,194 @@
+---
+title: "Phase2_Kenny_B"
+author: "Kenneth Burlingham"
+date: "2025-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries}
+library(tidyverse)
+```
+
+Just want a way to look at the list of columns
+
+```{r load data}
+merged_data<-read.csv("merged_data.csv")
+merged_data$SOVI_RATNG<-as.factor(merged_data$SOVI_RATNG) #cleaning
+nri_cols<-names(merged_data)
+
+length(unique(merged_data$STCOFIPS))==nrow(merged_data)
+
+```
+
+All counties with avalanche 
+
+```{r check out useless columns}
+
+col_summary <- merged_data |> 
+  summarise(across(everything(), ~ case_when(
+    all(is.na(.x)) ~ "all_na",
+    n_distinct(.x, na.rm = TRUE) == 1 ~ "one_value",
+    TRUE ~ "ok"
+  ))) |> 
+  pivot_longer(everything(), names_to = "column", values_to = "status")
+
+# Separate results
+all_na_cols <- col_summary |> filter(status == "all_na") |> pull(column)
+one_value_cols <- col_summary |> filter(status == "one_value") |> pull(column)
+
+list(
+  entirely_na = all_na_cols,
+  one_unique_value = one_value_cols
+)
+
+mean(is.na(merged_data$CFLD_EVNTS))
+mean(is.na(merged_data$ERQK_EVNTS))
+mean(is.na(merged_data$WFIR_EVNTS))
+
+table(merged_data$AVLN_EXPB) #208 counties with building avalanche dmg
+table(merged_data$AVLN_EXPP) 
+table(merged_data$AVLN_EXPPE) #population equivalence
+table(merged_data$AVLN_EXPT)
+
+```
+
+Columns counting events for coastal flooding, earthquakes and wildfire - completely empty
+Columns counting avalanche exposure is only one value for 208 counties
+
+```{r counties with avalanche exposure}
+merged_data[which(!is.na(merged_data$AVLN_EXPB)),]%>%select(COUNTY,STATE)
+```
+
+Loss types are all skewed
+
+```{r check skewness}
+hist(merged_data$EAL_VALT)
+hist(log(merged_data$EAL_VALT))
+
+merged_data$log_EAL_VALT<-log(merged_data$EAL_VALT) #log since skewed
+summary(merged_data$EAL_VALT)
+
+#all skewed
+hist(merged_data$EAL_VALA)
+hist(merged_data$EAL_VALB)
+hist(merged_data$EAL_VALPE)
+
+summary(merged_data$EAL_VALA)
+summary(merged_data$EAL_VALB)
+summary(merged_data$EAL_VALPE)
+
+merged_data$log_EAL_VALA<-log(merged_data$EAL_VALA+1)
+merged_data$log_EAL_VALB<-log(merged_data$EAL_VALB)
+merged_data$log_EAL_VALPE<-log(merged_data$EAL_VALPE)
+
+
+```
+
+```{r Exploring total expect loss}
+merged_data%>%select(EAL_VALT,STATE,COUNTY)%>%arrange(desc(EAL_VALT))%>%head(10)
+
+merged_data[which.max(merged_data$EAL_VALT),c("STATE","COUNTY")] #LA is the highest EAL_VALT
+
+```
+
+Wanted to check where there isn't any SOVI data, basically just territories of the US.
+
+```{r SOVI exploration}
+merged_data[which(merged_data$SOVI_RATNG=="Data Unavailable"),]%>%select(STATE,COUNTY,SOVI_SCORE)
+#missing SOVI rating, American Samoa, Guam, Northern Mariana Islands,Virgin Islands
+#Also missing SOVI Score, obviously
+
+summary(merged_data$SOVI_SCORE)
+hist(merged_data$SOVI_SCORE)
+
+merged_data_s<-filter(merged_data,SOVI_RATNG!="Data Unavailable")
+
+```
+
+Created "merged_data_s", removing the ten counties from territories that are missing SOVI data.
+
+```{r categorical sovi ratings explaining total loss}
+table(merged_data$SOVI_RATNG)
+
+#categorical sovi - loses too much information
+sovi_cat_model<-lm(log_EAL_VALT~SOVI_RATNG,
+                    data=merged_data)
+
+summary(sovi_cat_model)
+
+#trying categorical one more time with specific loss type
+sovi_cat_ag<-lm(log_EAL_VALA~SOVI_RATNG,
+            data=merged_data)
+summary(sovi_cat_ag)
+#holy shit?
+
+sovi_cat_pe<-lm(log_EAL_VALPE~SOVI_RATNG,
+                data=merged_data)
+summary(sovi_cat_pe)
+
+```
+
+```{r numeric sovi explaining loss types}
+#numeric sovi with total
+sovi_num_model<-lm(log_EAL_VALT~SOVI_SCORE,
+                   data=merged_data)
+summary(sovi_num_model)
+
+#numeric sovi with ag
+sovi_ag<-lm(log_EAL_VALA~SOVI_SCORE,
+            data=merged_data)
+summary(sovi_ag)
+
+#num sovi with human loss
+sovi_pe<-lm(log_EAL_VALPE~SOVI_SCORE,
+            data=merged_data)
+summary(sovi_pe)
+
+#num sovi with bldg loss
+sovi_bld<-lm(log_EAL_VALB~SOVI_SCORE,
+             data=merged_data)
+summary(sovi_bld)
+```
+
+SOVI is not significant when converted to categorical, too much information is lost
+
+Ag~SOVI coeff: A one point increase in SOVI is associated with a 1% decrease in agricultural damage
+Pe~SOVI: 0.9% increase in person damage
+Bld~SOVI: 1.65% increase in building damage (largest coefficient and R^2)
+
+
+```{r plots}
+ggplot(merged_data, aes(x = SOVI_SCORE, y = log_EAL_VALT)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "log(EAL_VALT) vs SOVI_SCORE",
+    x = "SOVI Score",
+    y = "Log of EAL_VALT"
+  ) +
+  theme_minimal()
+```
+
+The relationship between log losses + SOVI looks linear
+
+```{r loss explaining sovi scores}
+ag_loss<-lm(SOVI_SCORE~log_EAL_VALA,
+            data=merged_data)
+summary(ag_loss)
+
+pe_loss<-lm(SOVI_SCORE~log_EAL_VALPE,
+            data=merged_data)
+summary(pe_loss)
+
+bld_loss<-lm(SOVI_SCORE~log_EAL_VALB,
+            data=merged_data)
+summary(bld_loss)
+```
+
+Ag Loss: 1% increase in log ag loss is associated with an decrease of 0.009 sovi points
+Pe loss: 1% increase in log pe loss > increase of 0.04 sovi points
+Bld loss: 1% increase in log bld loss > increase of 0.042 sovi points
