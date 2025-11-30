@@ -1,0 +1,47 @@
+---
+title: "Natalia_Phase 2"
+output: html_document
+date: "2025-11-30"
+---
+
+```{r}
+#PHASE 2
+#Hazard Specific Analysis
+
+hazards <- c("AVLN_EALPE", "CWAV_EALPE", "HWAV_EALPE", "SWND_EALPE")
+
+hazard_summary <- bind_rows(
+  lapply(hazards, function(h) {
+
+    fit <- aov(as.formula(paste(h, "~ SOVI_RATNG")),
+               data = nri_clean)
+    pval <- summary(fit)[[1]][1, "Pr(>F)"]
+
+    means <- nri_clean %>%
+      group_by(SOVI_RATNG) %>%
+      summarise(m = mean(.data[[h]], na.rm = TRUE)) %>%
+      filter(SOVI_RATNG %in% c("Very Low", "Very High"))
+
+    diff <- means$m[means$SOVI_RATNG=="Very High"] -
+            means$m[means$SOVI_RATNG=="Very Low"]
+
+    tibble(hazard = h, p_value = round(pval,5),
+           diff_VH_minus_VL = round(diff,2))
+  })
+)
+
+hazard_summary %>% arrange(desc(diff_VH_minus_VL))
+
+#Boxplots for each hazard
+for (h in hazards) {
+  p <- ggplot(nri_clean, aes(x = SOVI_RATNG, y = .data[[h]])) +
+    geom_boxplot(fill = "skyblue") +
+    scale_y_log10() +
+    labs(title = paste(h, "by SOVI Rating"),
+         x = "SOVI Rating",
+         y = "Expected Annual Loss (log)")
+
+  print(p)
+}
+```
+
