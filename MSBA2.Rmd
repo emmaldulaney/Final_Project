@@ -1,0 +1,208 @@
+---
+title: "MSBA CAP N2"
+output: html_document
+date: "2025-12-01"
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(glmnet)
+library(randomForest)
+library(xgboost)
+
+###############################################################
+# LOAD MASTER DATASET
+###############################################################
+
+merged_data <- read.csv("merged_data.csv")
+
+# Ensure FIPS is padded
+merged_data$STCOFIPS <- str_pad(as.character(merged_data$STCOFIPS), 5, pad = "0")
+
+# Clean version (remove unavailable SOVI)
+nri_clean <- merged_data %>%
+  filter(!is.na(SOVI_RATNG), SOVI_RATNG != "Data Unavailable")
+
+###############################################################
+# PHASE 2.5 — HAZARD-SPECIFIC EAL EXPLORATION
+###############################################################
+
+hazards <- c("AVLN_EALPE", "CWAV_EALPE", "HWAV_EALPE", "SWND_EALPE")
+
+hazard_summary <- bind_rows(
+  lapply(hazards, function(h) {
+
+    fit <- aov(as.formula(paste(h, "~ SOVI_RATNG")), data = nri_clean)
+    pval <- summary(fit)[[1]][1, "Pr(>F)"]
+
+    means <- nri_clean %>%
+      group_by(SOVI_RATNG) %>%
+      summarise(m = mean(.data[[h]], na.rm = TRUE)) %>%
+      filter(SOVI_RATNG %in% c("Very Low", "Very High"))
+
+    diff <- means$m[means$SOVI_RATNG == "Very High"] -
+            means$m[means$SOVI_RATNG == "Very Low"]
+
+    tibble(
+      hazard = h,
+      p_value = round(pval, 5),
+      diff_VH_minus_VL = round(diff, 2)
+    )
+  })
+)
+
+print(hazard_summary %>% arrange(desc(diff_VH_minus_VL)))
+
+# Boxplots
+for (h in hazards) {
+  print(
+    ggplot(nri_clean, aes(x = SOVI_RATNG, y = .data[[h]])) +
+      geom_boxplot(fill = "skyblue") +
+      scale_y_log10() +
+      labs(
+        title = paste(h, "by SOVI Rating"),
+        x = "SOVI Rating",
+        y = "Expected Annual Loss (log)"
+      )
+  )
+}
+
+###############################################################
+# PHASE 3.5 — MODEL-BASED INFERENCE (Predict SOVI_SCORE)
+###############################################################
+
+model_df <- merged_data %>%
+  filter(!is.na(SOVI_SCORE)) %>%
+  mutate(across(matches("EAL"), ~ replace_na(., 0))) %>%
+  select(SOVI_SCORE, matches("EAL"))
+
+# LASSO Model
+X <- model.matrix(SOVI_SCORE ~ ., data = model_df)[, -1]
+y <- model_df$SOVI_SCORE
+X <- X[, apply(X, 2, var) > 0]  # remove zero variance columns
+
+set.seed(123)
+lasso_mod <- cv.glmnet(X, y, alpha = 1)
+print(coef(lasso_mod, s = "lambda.min"))
+
+# Random Forest Model
+set.seed(123)
+rf_mod <- randomForest(
+  SOVI_SCORE ~ ., 
+  data = model_df,
+  importance = TRUE,
+  ntree = 500
+)
+
+varImpPlot(rf_mod)
+
+###############################################################
+# PHASE 4.1 — RISK SCORE PREDICTIVE MODELING
+###############################################################
+
+risk_df <- merged_data %>%
+  mutate(RISK_SCORE = as.numeric(RISK_SCORE)) %>%
+  filter(!is.na(RISK_SCORE))
+
+# Keep only numeric predictors
+risk_df <- risk_df %>% select(where(is.numeric))
+
+# Remove EAL fields (prohibited by FEMA)
+risk_df <- risk_df %>% select(-contains("EAL"))
+
+# Remove >20% NA columns
+risk_df <- risk_df %>% select(where(~ mean(is.na(.)) < 0.20))
+
+# Replace remaining NA with 0 (FEMA convention)
+risk_df[is.na(risk_df)] <- 0
+
+# Remove zero-variance cols
+risk_df <- risk_df %>% select(where(~ var(.) > 0))
+
+# Prepare matrices
+X_risk <- as.matrix(risk_df %>% select(-RISK_SCORE))
+y_risk <- risk_df$RISK_SCORE
+
+cat("Risk model shape:", nrow(X_risk), "rows x", ncol(X_risk), "columns\n")
+
+# LASSO
+set.seed(123)
+lasso_risk <- cv.glmnet(X_risk, y_risk, alpha = 1)
+print(coef(lasso_risk, s = "lambda.min"))
+
+# Random Forest
+set.seed(123)
+rf_risk <- randomForest(
+  x = X_risk,
+  y = y_risk,
+  importance = TRUE,
+  ntree = 500
+)
+
+# Extract importance
+rf_imp <- importance(rf_risk)
+
+# Convert safely
+rf_tbl <- tryCatch({
+  as_tibble(rf_imp, rownames = "variable")
+}, error = function(e) {
+  tibble(variable = character(), Importance = numeric())
+})
+
+# Identify numeric columns
+num_cols <- names(rf_tbl)[sapply(rf_tbl, is.numeric)]
+
+# CASE 1 — There ARE valid importance columns
+if (length(num_cols) > 0 && nrow(rf_tbl) > 0) {
+
+  metric <- num_cols[1]
+
+  rf_top <- rf_tbl %>%
+    arrange(desc(.data[[metric]])) %>%
+    head(15)
+
+  colnames(rf_top)[colnames(rf_top) == metric] <- "Importance"
+
+} else {
+  # CASE 2 — No valid importance → create empty table
+  rf_top <- tibble(
+    variable = character(),
+    Importance = numeric()
+  )
+}
+
+print(rf_top)
+
+
+# XGBoost
+dtrain <- xgb.DMatrix(data = X_risk, label = y_risk)
+
+set.seed(123)
+xgb_model <- xgboost(
+  data = dtrain,
+  nrounds = 200,
+  max_depth = 4,
+  eta = 0.05,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  objective = "reg:squarederror",
+  verbose = 0
+)
+
+xgb_imp <- xgb.importance(model = xgb_model)
+print(xgb_imp[1:20, ])
+xgb.plot.importance(xgb_imp[1:15, ])
+
+###############################################################
+# RESULTS RETURNED
+###############################################################
+
+list(
+  hazard_summary = hazard_summary,
+  sovi_lasso = coef(lasso_mod, s = "lambda.min"),
+  risk_rf_top15 = rf_top,
+  risk_xgb_top20 = xgb_imp[1:20, ]
+)
+```
+
