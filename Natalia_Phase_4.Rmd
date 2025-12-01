@@ -1,0 +1,134 @@
+---
+title: "Phase 4"
+output: html_document
+date: "2025-11-30"
+---
+
+```{r}
+#PHASE 4
+#Risk Score Model
+
+library(glmnet)
+library(randomForest)
+library(xgboost)
+
+#Clean Modeling Data Set
+
+risk_df <- nri %>%
+  mutate(RISK_SCORE = as.numeric(RISK_SCORE)) %>%
+  filter(!is.na(RISK_SCORE))
+
+# Remove ID variables
+risk_df <- risk_df %>%
+  select(-STATE, -STATEABBRV, -COUNTY, -STCOFIPS)
+
+# Remove prohibited predictors (EAL = losses)
+risk_df <- risk_df %>%
+  select(-contains("EAL"))
+
+# Keep only numeric predictors
+risk_df <- risk_df %>%
+  select(where(is.numeric))
+
+# Remove numeric columns with >20% NA
+risk_df <- risk_df %>%
+  select(where(~ mean(is.na(.)) < 0.20))
+
+# Replace remaining NA with 0 (FEMA convention)
+risk_df[is.na(risk_df)] <- 0
+
+# Remove zero-variance cols
+risk_df <- risk_df %>%
+  select(where(~ var(.) > 0))
+
+# Prepare X and y
+X_risk <- as.matrix(risk_df %>% select(-RISK_SCORE))
+y_risk <- risk_df$RISK_SCORE
+
+cat("FINAL SHAPE X_risk: ", dim(X_risk)[1], " rows x ", dim(X_risk)[2], " cols\n")
+
+
+#LASSO
+
+set.seed(123)
+lasso_risk <- cv.glmnet(X_risk, y_risk, alpha = 1)
+
+lasso_coef <- coef(lasso_risk, s = "lambda.min")
+print(lasso_coef)
+
+
+#RF
+
+library(dplyr)
+
+set.seed(123)
+rf_risk <- randomForest(
+  x = X_risk,
+  y = y_risk,
+  importance = TRUE,
+  ntree = 500
+)
+
+#Extract importance
+rf_imp <- importance(rf_risk)
+
+rf_imp_df <- data.frame(
+  variable = rownames(rf_imp),
+  IncMSE = rf_imp[, "%IncMSE"],
+  row.names = NULL
+)
+
+rf_top <- rf_imp_df %>%
+  arrange(desc(IncMSE)) %>%
+  dplyr::slice(1:15)
+
+print(rf_top)
+
+
+ggplot(rf_top, aes(x = reorder(variable, IncMSE), y = IncMSE)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 15 Predictors of RISK_SCORE (Random Forest)",
+    x = "Variable",
+    y = "% Increase in MSE"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+#XGBOOST MODEL
+
+# Convert to xgb.DMatrix
+dtrain <- xgb.DMatrix(data = X_risk, label = y_risk)
+
+set.seed(123)
+xgb_model <- xgboost(
+  data = dtrain,
+  nrounds = 200,
+  max_depth = 4,
+  eta = 0.05,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  objective = "reg:squarederror",
+  verbose = 0
+)
+
+#Var Importance
+xgb_imp <- xgb.importance(model = xgb_model)
+xgb.plot.importance(xgb_imp[1:15, ])
+
+print(xgb_imp[1:20, ])
+
+
+#Summary Table
+
+risk_results <- list(
+  lasso_top = lasso_coef,
+  rf_top15 = rf_top,
+  xgb_top20 = xgb_imp[1:20, ]
+)
+
+risk_results
+```
+
+

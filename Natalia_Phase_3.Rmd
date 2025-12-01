@@ -1,0 +1,33 @@
+---
+title: "Natalia_Phase 3"
+output: html_document
+date: "2025-11-30"
+---
+
+```{r}
+#PHASE 3
+
+#PREDICT SOVI_SCORE USING EAL VARIABLES
+
+
+model_df <- nri %>%
+  filter(!is.na(SOVI_SCORE)) %>%
+  mutate(across(matches("EAL"), ~ replace_na(., 0))) %>%
+  select(SOVI_SCORE, matches("EAL"))
+
+#LASSO
+X <- model.matrix(SOVI_SCORE ~ ., data = model_df)[, -1]
+y <- model_df$SOVI_SCORE
+X <- X[, apply(X, 2, var) > 0]
+
+set.seed(123)
+lasso_mod <- cv.glmnet(X, y, alpha = 1)
+coef(lasso_mod, s = "lambda.min")
+
+#RF
+set.seed(123)
+rf_mod <- randomForest(SOVI_SCORE ~ ., data = model_df,
+                       importance = TRUE, ntree = 500)
+varImpPlot(rf_mod)
+
+```
