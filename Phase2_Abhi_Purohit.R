@@ -3,7 +3,7 @@ library(ggplot2)
 library(tidyr)
 library(forcats)
 
-nri <- read.csv("/Users/abhip/Downloads/nri_county_trimmed.csv")
+merged_data <- read.csv("/Users/abhip/Downloads/merged_data.csv")
 
 # SOVI_RATNG is the social vulnerability category
 # EAL_VALB is the expected annual loss to buildings
@@ -12,7 +12,7 @@ nri <- read.csv("/Users/abhip/Downloads/nri_county_trimmed.csv")
 # dropped rows where SOVI_RATNG is missing
 # dropped rows where SOVI_RATNG is "Data Unavailable"
 # turned SOVI_RATNG into an ordered factor from lowest to highest vulnerability
-loss_df <- nri %>%
+loss_df <- merged_data %>%
   select(SOVI_RATNG, EAL_VALB, EAL_VALPE, EAL_VALA) %>%
   filter(
     !is.na(SOVI_RATNG),
@@ -141,7 +141,7 @@ ggplot(loss_long, aes(x = SOVI_RATNG, y = loss_value)) +
   )
 
 # out of the total loss (EAL_VALT), what share goes to buildings, people, and agriculture
-loss_comp <- nri %>%
+loss_comp <- merged_data %>%
   select(SOVI_RATNG, EAL_VALT, EAL_VALB, EAL_VALPE, EAL_VALA) %>%
   filter(
     !is.na(SOVI_RATNG),
@@ -177,7 +177,7 @@ share_summary
 #built a smaller dataset that keeps:
 #county ID (STCOFIPS), SOVI_RATNG, raw EAL values for buildings, people, agriculture
 #and also adds: log10(EAL + 1) for each loss type (to shrink the scale and handle skewed, heavy-tailed dollar amounts)
-loss_features <- nri %>%
+loss_features <- merged_data %>%
   select(STCOFIPS, SOVI_RATNG, EAL_VALB, EAL_VALPE, EAL_VALA) %>%
   filter(
     !is.na(SOVI_RATNG),
