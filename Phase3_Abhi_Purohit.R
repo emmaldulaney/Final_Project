@@ -5,18 +5,18 @@ library(stringr)
 library(forcats)
 library(purrr)
 
-nri <- read.csv("/Users/abhip/Downloads/nri_county_trimmed.csv")
+merged_data <- read.csv("/Users/abhip/Downloads/merged_data.csv")
 
 #finding all the hazard-specific total loss columns
 #these columns end with "_EALT" like AVLN_EALT, CWAV_EALT
 #each one is the expected annual loss (total) for a specific hazard type.
-hazard_cols <- grep("_EALT$", names(nri), value = TRUE)
+hazard_cols <- grep("_EALT$", names(merged_data), value = TRUE)
 
 hazard_cols
 length(hazard_cols)  #num of hazards
 
 # making a "long" dataset, one row = county × hazard
-hazard_long <- nri %>%
+hazard_long <- merged_data %>%
   select(STCOFIPS, SOVI_RATNG, all_of(hazard_cols)) %>%
   filter(
     !is.na(SOVI_RATNG),
