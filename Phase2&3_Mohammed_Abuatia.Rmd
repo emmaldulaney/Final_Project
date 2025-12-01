@@ -1,0 +1,487 @@
+
+Read/Clean Merged Data and Load Libraries
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(FSA)      
+library(rstatix)
+library(caret)
+library(randomForest)
+
+merged_data <- read.csv("merged_data.csv", header = TRUE)
+
+
+# Kenny's Phase 2 Submission 
+
+merged_data$SOVI_RATNG<-as.factor(merged_data$SOVI_RATNG) #cleaning
+nri_cols<-names(merged_data)
+
+length(unique(merged_data$STCOFIPS))==nrow(merged_data)
+
+col_summary <- merged_data |> 
+  summarise(across(everything(), ~ case_when(
+    all(is.na(.x)) ~ "all_na",
+    n_distinct(.x, na.rm = TRUE) == 1 ~ "one_value",
+    TRUE ~ "ok"
+  ))) |> 
+  pivot_longer(everything(), names_to = "column", values_to = "status")
+
+# Separate results
+all_na_cols <- col_summary |> filter(status == "all_na") |> pull(column)
+one_value_cols <- col_summary |> filter(status == "one_value") |> pull(column)
+
+list(
+  entirely_na = all_na_cols,
+  one_unique_value = one_value_cols
+)
+
+mean(is.na(merged_data$CFLD_EVNTS))
+mean(is.na(merged_data$ERQK_EVNTS))
+mean(is.na(merged_data$WFIR_EVNTS))
+
+table(merged_data$AVLN_EXPB) #208 counties with building avalanche dmg
+table(merged_data$AVLN_EXPP) 
+table(merged_data$AVLN_EXPPE) #population equivalence
+table(merged_data$AVLN_EXPT)
+
+merged_data[which(!is.na(merged_data$AVLN_EXPB)),]%>%select(COUNTY,STATE)
+
+hist(merged_data$EAL_VALT)
+hist(log(merged_data$EAL_VALT))
+
+merged_data$log_EAL_VALT<-log(merged_data$EAL_VALT) #log since skewed
+summary(merged_data$EAL_VALT)
+
+#all skewed
+hist(merged_data$EAL_VALA)
+hist(merged_data$EAL_VALB)
+hist(merged_data$EAL_VALPE)
+
+summary(merged_data$EAL_VALA)
+summary(merged_data$EAL_VALB)
+summary(merged_data$EAL_VALPE)
+
+merged_data$log_EAL_VALA<-log(merged_data$EAL_VALA+1)
+merged_data$log_EAL_VALB<-log(merged_data$EAL_VALB)
+merged_data$log_EAL_VALPE<-log(merged_data$EAL_VALPE)
+
+merged_data%>%select(EAL_VALT,STATE,COUNTY)%>%arrange(desc(EAL_VALT))%>%head(10)
+
+merged_data[which.max(merged_data$EAL_VALT),c("STATE","COUNTY")] #LA is the highest EAL_VALT
+
+merged_data[which(merged_data$SOVI_RATNG=="Data Unavailable"),]%>%select(STATE,COUNTY,SOVI_SCORE)
+#missing SOVI rating, American Samoa, Guam, Northern Mariana Islands,Virgin Islands
+#Also missing SOVI Score, obviously
+
+summary(merged_data$SOVI_SCORE)
+hist(merged_data$SOVI_SCORE)
+
+merged_data_s<-filter(merged_data,SOVI_RATNG!="Data Unavailable") # Created "merged_data_s", removing the ten counties from territories that are missing SOVI data.
+
+
+```
+
+Phase 2 and 3
+
+```{r}
+
+### EAL_VALT: Expected Annual Loss (Total) ###
+
+# Compare Mean and Median Values
+
+summary_stats <- merged_data_s %>%
+  group_by(SOVI_RATNG) %>%
+  summarise(
+    N = n(),
+    Mean = mean(EAL_VALT, na.rm = TRUE),
+    Median = median(EAL_VALT, na.rm = TRUE))
+
+print(summary_stats)
+
+
+# Boxplot for EAL_VALT by SOVI_RATNG (Using the Original Scale)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = EAL_VALT, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Expected Annual Loss (EAL_VALT) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Total Expected Annual Loss (EAL_VALT, $)") +
+  scale_y_continuous(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+
+# Boxplot for EAL_VALT by SOVI_RATNG (Using a Log Transformation)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = EAL_VALT, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Expected Annual Loss (EAL_VALT) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Total Expected Annual Loss (EAL_VALT, $)") +
+  scale_y_log10(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+# Post-Hoc Testing & Effect Sizes
+
+kruskal_test(merged_data_s, EAL_VALT ~ SOVI_RATNG)
+
+dunn_result <- dunnTest(EAL_VALT ~ SOVI_RATNG,
+                        data = merged_data_s,
+                        method = "bonferroni") # Dunn's test (with Bonferroni p-value adjustment)
+dunn_result
+
+
+merged_data_s %>% kruskal_effsize(EAL_VALT ~ SOVI_RATNG) # Effect Size is 0.0466 (SMALL)
+
+# Manually Calculating Effect Size
+
+# 1. Assuming your total clean sample size is stored as N
+N <- nrow(merged_data_s) # Get the total number of counties (rows) used in the analysis
+
+# 2. Assuming the dunnTest result is stored in 'dunn_result'
+#    The results table is accessed via $res
+dunn_results_table <- dunn_result$res
+
+# 3. Calculate the effect size 'r' and add it to the table
+dunn_results_with_r <- dunn_results_table %>%
+  mutate(
+    effect_size_r = abs(Z) / sqrt(N), # Calculate r using the Z-statistic and total N
+    is_significant = P.adj < 0.05) # Add a column to flag significant results
+
+dunn_results_with_r
+
+
+```
+
+```{r}
+
+### HWAV_EALPE: Heat Wave - Population Loss ###
+### Focus: Population loss from a hazard correlated with socioeconomic factors. Heat Wave loss is primarily driven by lack of air conditioning, age, and poverty
+
+# Compare Mean and Median Values
+
+summary_stats <- merged_data_s %>%
+  group_by(SOVI_RATNG) %>%
+  summarise(
+    N = n(),
+    Mean = mean(HWAV_EALPE, na.rm = TRUE),
+    Median = median(HWAV_EALPE, na.rm = TRUE))
+
+print(summary_stats)
+
+
+# Boxplot for HWAV_EALPE by SOVI_RATNG (Using the Original Scale)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = HWAV_EALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Population Loss due to Heat Wave (HWAV_EALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Population Annual Loss (HWAV_EALPE, $)") +
+  scale_y_continuous(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+
+# Boxplot for EAL_VALT by SOVI_RATNG (Using a Log Transformation)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = HWAV_EALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Population Loss due to Heat Wave (HWAV_EALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Population Loss (HWAV_EALPE, $)") +
+  scale_y_log10(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+# Post-Hoc Testing & Effect Sizes
+
+kruskal_test(merged_data_s, HWAV_EALPE ~ SOVI_RATNG)
+
+dunn_result <- dunnTest(HWAV_EALPE ~ SOVI_RATNG,
+                        data = merged_data_s,
+                        method = "bonferroni") # Dunn's test (with Bonferroni p-value adjustment)
+dunn_result
+
+
+merged_data_s %>% kruskal_effsize(HWAV_EALPE ~ SOVI_RATNG) # Effect Size is 0.0466 (SMALL)
+
+# Manually Calculating Effect Size
+
+# 1. Assuming your total clean sample size is stored as N
+N <- nrow(merged_data_s) # Get the total number of counties (rows) used in the analysis
+
+# 2. Assuming the dunnTest result is stored in 'dunn_result'
+#    The results table is accessed via $res
+dunn_results_table <- dunn_result$res
+
+# 3. Calculate the effect size 'r' and add it to the table
+dunn_results_with_r <- dunn_results_table %>%
+  mutate(
+    effect_size_r = abs(Z) / sqrt(N), # Calculate r using the Z-statistic and total N
+    is_significant = P.adj < 0.05) # Add a column to flag significant results
+
+dunn_results_with_r
+
+
+
+```
+
+
+
+```{r}
+
+### CWAV_EALPE: Cold Wave - Population Loss ###
+
+# Compare Mean and Median Values
+
+summary_stats <- merged_data_s %>%
+  group_by(SOVI_RATNG) %>%
+  summarise(
+    N = n(),
+    Mean = mean(CWAV_EALPE, na.rm = TRUE),
+    Median = median(CWAV_EALPE, na.rm = TRUE))
+
+print(summary_stats) # The most notable feature is the zero median loss for the Very High group. This is unsual and suggests that a large portion of Very High counties may not experince cold waves at all, or the loss is negligible. 
+
+
+# Boxplot for CWAV_EALPE by SOVI_RATNG (Using the Original Scale)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = CWAV_EALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Population Loss due to Cold Wave (CWAV_EALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Population Annual Loss (CWAV_EALPE, $)") +
+  scale_y_continuous(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+
+# Boxplot for CWAV_EALPE by SOVI_RATNG (Using a Log Transformation)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = CWAV_EALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Population Loss due to Cold Wave (CWAV_EALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Population Loss (CWAV_EALPE, $)") +
+  scale_y_log10(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+# Post-Hoc Testing & Effect Sizes
+
+kruskal_test(merged_data_s, CWAV_EALPE ~ SOVI_RATNG) # p-value is statistically significant, which means there are significant differences between CWAV_EALPE and SOVI_RATING
+
+dunn_result <- dunnTest(CWAV_EALPE ~ SOVI_RATNG,
+                        data = merged_data_s,
+                        method = "bonferroni") # Dunn's test (with Bonferroni p-value adjustment)
+dunn_result
+
+
+merged_data_s %>% kruskal_effsize(CWAV_EALPE ~ SOVI_RATNG) # Effect Size is 0.0936, which indicates that SOVI-RATING plays a larger role in CWAV_EALPE, compared to EAL_VALT and HWAV_EALPE
+
+# Manually Calculating Effect Size
+
+# 1. Assuming your total clean sample size is stored as N
+N <- nrow(merged_data_s) # Get the total number of counties (rows) used in the analysis
+
+# 2. Assuming the dunnTest result is stored in 'dunn_result'
+#    The results table is accessed via $res
+dunn_results_table <- dunn_result$res
+
+# 3. Calculate the effect size 'r' and add it to the table
+dunn_results_with_r <- dunn_results_table %>%
+  mutate(
+    effect_size_r = abs(Z) / sqrt(N), # Calculate r using the Z-statistic and total N
+    is_significant = P.adj < 0.05) # Add a column to flag significant results
+
+dunn_results_with_r # The differences are complex. For example, Relatively Low SOVIs are statistically different from Relatively High SOVIs. The Very Low group is not statistically different from the Relatively Low group. This suggests that SOVI is not simplr or linear for this hazard
+
+
+
+```
+
+
+```{r}
+
+### EAL_VALPE: Total Population Loss
+
+# Compare Mean and Median Values
+
+summary_stats <- merged_data_s %>%
+  group_by(SOVI_RATNG) %>%
+  summarise(
+    N = n(),
+    Mean = mean(EAL_VALPE, na.rm = TRUE),
+    Median = median(EAL_VALPE, na.rm = TRUE))
+
+print(summary_stats)
+
+
+# Boxplot for EAL_VALPE by SOVI_RATNG (Using the Original Scale)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = EAL_VALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Total Population Loss (EAL_VALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Total Population Loss (EAL_VALPE, $)") +
+  scale_y_continuous(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+
+# Boxplot for EAL_VALPE by SOVI_RATNG (Using a Log Transformation)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = EAL_VALPE, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Total Population Loss (EAL_VALPE) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Total Population Loss (EAL_VALPE, $)") +
+  scale_y_log10(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+# Post-Hoc Testing & Effect Sizes
+
+kruskal_test(merged_data_s, EAL_VALPE ~ SOVI_RATNG)
+
+dunn_result <- dunnTest(EAL_VALPE ~ SOVI_RATNG,
+                        data = merged_data_s,
+                        method = "bonferroni") # Dunn's test (with Bonferroni p-value adjustment)
+dunn_result
+
+
+merged_data_s %>% kruskal_effsize(EAL_VALPE ~ SOVI_RATNG) # Effect Size is 0.0466 (SMALL)
+
+# Manually Calculating Effect Size
+
+# 1. Assuming your total clean sample size is stored as N
+N <- nrow(merged_data_s) # Get the total number of counties (rows) used in the analysis
+
+# 2. Assuming the dunnTest result is stored in 'dunn_result'
+#    The results table is accessed via $res
+dunn_results_table <- dunn_result$res
+
+# 3. Calculate the effect size 'r' and add it to the table
+dunn_results_with_r <- dunn_results_table %>%
+  mutate(
+    effect_size_r = abs(Z) / sqrt(N), # Calculate r using the Z-statistic and total N
+    is_significant = P.adj < 0.05) # Add a column to flag significant results
+
+dunn_results_with_r
+
+
+```
+
+
+```{r}
+
+### LNDS_EALB: Landslide - Building Loss ###
+
+# Compare Mean and Median Values
+
+summary_stats <- merged_data_s %>%
+  group_by(SOVI_RATNG) %>%
+  summarise(
+    N = n(),
+    Mean = mean(LNDS_EALB, na.rm = TRUE),
+    Median = median(LNDS_EALB, na.rm = TRUE))
+
+print(summary_stats)
+
+
+# Boxplot for LNDS_EALB by SOVI_RATNG (Using the Original Scale)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = LNDS_EALB, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Building Loss due to Landslide (LNDS_EALB) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Building Loss (LNDS_EALB, $)") +
+  scale_y_continuous(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+
+# Boxplot for LNDS_EALB by SOVI_RATNG (Using a Log Transformation)
+
+ggplot(merged_data_s, aes(x = SOVI_RATNG, y = LNDS_EALB, fill = SOVI_RATNG)) +
+  geom_boxplot() +
+  labs(
+    title = "Building Loss (LNDS_EALB) by Social Vulnerability Rating (SOVI_RATNG)",
+    x = "Social Vulnerability Rating",
+    y = "Building Loss (LNDS_EALB, $)") +
+  scale_y_log10(labels = scales::comma) + # Format Y-axis as dollar values
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels
+    legend.position = "none") + 
+  geom_point(data = summary_stats, aes(y = Mean), shape = 23, fill = "white", size = 3) # To show the mean visually!
+
+# Post-Hoc Testing & Effect Sizes
+
+kruskal_test(merged_data_s, LNDS_EALB ~ SOVI_RATNG)
+
+dunn_result <- dunnTest(LNDS_EALB ~ SOVI_RATNG,
+                        data = merged_data_s,
+                        method = "bonferroni") # Dunn's test (with Bonferroni p-value adjustment)
+dunn_result
+
+
+merged_data_s %>% kruskal_effsize(LNDS_EALB ~ SOVI_RATNG) # Effect Size is 0.0466 (SMALL)
+
+# Manually Calculating Effect Size
+
+# 1. Assuming your total clean sample size is stored as N
+N <- nrow(merged_data_s) # Get the total number of counties (rows) used in the analysis
+
+# 2. Assuming the dunnTest result is stored in 'dunn_result'
+#    The results table is accessed via $res
+dunn_results_table <- dunn_result$res
+
+# 3. Calculate the effect size 'r' and add it to the table
+dunn_results_with_r <- dunn_results_table %>%
+  mutate(
+    effect_size_r = abs(Z) / sqrt(N), # Calculate r using the Z-statistic and total N
+    is_significant = P.adj < 0.05) # Add a column to flag significant results
+
+dunn_results_with_r
+```
